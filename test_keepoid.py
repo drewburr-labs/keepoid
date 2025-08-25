@@ -1,6 +1,7 @@
 import pytest
 from datetime import datetime, timedelta
-from keepoid import parse_duration, determine_snapshots_to_prune, Snapshot
+import random
+from keepoid import parse_duration, determine_snapshots_to_prune, Snapshot, group_snapshots_by_dataset
 
 now = datetime(2023, 1, 31, 0, 0, 0)
 global_start_time_str = "00:00"
@@ -26,6 +27,19 @@ def sample_snapshots():
     snapshots = []
     for i in range(48):
         snap_time = now - timedelta(hours=i)
+        snapshots.append(
+            Snapshot(f"pool/data@autosnap_{snap_time.isoformat()}", snap_time)
+        )
+    return snapshots
+
+
+@pytest.fixture
+def randomized_snapshots():
+    # Create hourly snapshots for the last 48 hours with random second offsets
+    snapshots = []
+    for i in range(48):
+        snap_time = now - timedelta(hours=i)
+        snap_time += timedelta(seconds=random.randint(1, 59))
         snapshots.append(
             Snapshot(f"pool/data@autosnap_{snap_time.isoformat()}", snap_time)
         )
@@ -58,6 +72,33 @@ def test_hourly_policy(sample_snapshots):
 
     # 48 total - 25 kept = 23 to prune
     assert len(snapshots_to_prune) == (len(sample_snapshots) - expected_policy_kept)
+
+
+def test_randomized_seconds_policy(randomized_snapshots):
+    # Keep 5 + 1 hourly snapshots, even with random seconds
+    retention_policies = [
+        {"interval": "1h", "count": 5},
+    ]
+    prune_after = parse_duration("0m")
+
+    snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
+        randomized_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
+    )
+
+    # We expect 5 + 1 snapshots to be kept by the policy.
+    # The logic should find the best match for each of the 5 hourly intervals.
+    assert len(policy_kept) == 6
+
+    # Since pruneAfter is 0m, nothing extra is kept.
+    assert len(prune_after_kept) == 0
+
+    # 48 total - 5 kept = 43 to prune
+    assert len(snapshots_to_prune) == 42
 
 
 def test_daily_policy(sample_snapshots):
@@ -255,3 +296,18 @@ def test_multi_dataset_policy(multi_dataset_snapshots):
     assert len(kept_b) == 13
     assert len(prune_b) == 35
     assert len(pa_kept_b) == 0
+
+
+def test_group_snapshots_by_dataset():
+    snapshots = [
+        Snapshot("pool/data/A@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
+        Snapshot("pool/data/A@autosnap_2023-01-01T01:00:00", datetime(2023, 1, 1, 1, 0, 0)),
+        Snapshot("pool/data/B@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
+        Snapshot("pool/data/B@autosnap_2023-01-01T01:00:00", datetime(2023, 1, 1, 1, 0, 0)),
+        Snapshot("pool/data/C@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
+    ]
+    grouped = group_snapshots_by_dataset(snapshots)
+    assert set(grouped.keys()) == {"pool/data/A", "pool/data/B", "pool/data/C"}
+    assert len(grouped["pool/data/A"]) == 2
+    assert len(grouped["pool/data/B"]) == 2
+    assert len(grouped["pool/data/C"]) == 1

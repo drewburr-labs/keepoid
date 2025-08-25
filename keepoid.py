@@ -4,8 +4,6 @@ import argparse
 import subprocess
 import yaml
 from datetime import datetime, timedelta, time
-from collections import defaultdict
-
 
 def parse_duration(duration_str):
     """Parses a duration string like '1h', '30d' into a timedelta."""
@@ -140,6 +138,17 @@ def determine_snapshots_to_prune(
     return snapshots_to_prune, policy_kept_snapshots, prune_after_kept_snapshots
 
 
+def group_snapshots_by_dataset(snapshots):
+    """Groups snapshots by their dataset path (portion before '@')."""
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for snapshot in snapshots:
+        dataset = snapshot.name.split("@")[0]
+        grouped[dataset].append(snapshot)
+    return grouped
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Keepoid: ZFS snapshot retention and pruning tool."
@@ -179,9 +188,7 @@ def main():
 
     now = datetime.now()
 
-    snapshots_by_dataset = defaultdict(list)
-    for snapshot in all_snapshots:
-        snapshots_by_dataset[snapshot.name.split("@")[0]].append(snapshot)
+    snapshots_by_dataset = group_snapshots_by_dataset(all_snapshots)
 
     all_snapshots_to_prune = []
     all_policy_kept_snapshots = set()
