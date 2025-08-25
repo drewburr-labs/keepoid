@@ -1,0 +1,4 @@
+# /etc/cron.d/keepoid-cron
+
+# Run keepoid every 60 minutes
+0 * * * * root /usr/local/bin/keepoid 2>&1

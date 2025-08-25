@@ -1,0 +1,21 @@
+# /etc/keepoid/keepoid.conf
+
+startTime: 00:00
+pruneAfter: 1h
+path: backup/dataset
+skipParent: true # Skip pruning for `dataset`
+identifier: autosnap_
+
+retention:
+  # Retain 24 hourly snapshots (24 hours)
+  - interval: 1h
+    count: 24
+  # Retain 42 6-hourly snapshots (7 days)
+  - interval: 6h
+    count: 42
+  # Retain 30 24-hour snapshots (30 days)
+  - interval: 1d
+    count: 30
+  # Retain 3 30-day snapshots (90 days)
+  - interval: 30d
+    count: 3

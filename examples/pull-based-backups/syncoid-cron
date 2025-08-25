@@ -1,0 +1,8 @@
+# /etc/cron.d/syncoid-cron
+
+source='nonroot@hostname.example.com:pool/dataset'
+destination='backup/dataset'
+sshkey='/root/.ssh/id_rsa'
+
+# Run incremental sync every 30 minutes, with lzo compression
+0,30 * * * * root syncoid --recursive --skip-parent --compress lzo --sshkey $sshkey $source $destination 2>&1

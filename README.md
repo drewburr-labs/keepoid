@@ -102,6 +102,8 @@ It would be conterintuitive to prune snapshot 1 when snapshot 2 is created, beca
     sudo chmod +x /usr/local/bin/keepoid
     ```
 
+It's recommended to create an entry in crontab for keepoid to run regularly
+
 ## Development
 
 For local development and testing, it is recommended to use a Python virtual environment.
