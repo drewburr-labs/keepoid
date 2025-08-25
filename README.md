@@ -1,8 +1,8 @@
 # keepoid
 
-Keepoid is a 3rd party alternative to [sanoid](https://github.com/jimsalterjrs/sanoid), focusing on intelligent snapshot management on the `syncoid` destination site while permitting minimized snapshots on the source. Keepoid uses a fundimentally different way to think about snapshot management and pruning, and borrows retention philosophies from [pgBackRest](https://github.com/pgbackrest/pgbackrest).
+Keepoid is a 3rd party extension to [sanoid](https://github.com/jimsalterjrs/sanoid), focusing on intelligent snapshot management on the `syncoid` destination site while permitting minimized snapshots on the source. Keepoid uses a fundimentally different way to think about snapshot management and pruning, and borrows retention philosophies from [pgBackRest](https://github.com/pgbackrest/pgbackrest).
 
-Keepoid itself does not take snapshots. Instead, it focuses on retention and pruining of snapshots created by sanoid or syncoid. keepoid can be thought of as the system that determines which snapshots should be kept, and which should be auto-pruned.
+Keepoid itself does not take snapshots. Instead, it focuses on retention and pruining of snapshots created by sanoid and/or replicated with syncoid. keepoid can be thought of as the system that determines which snapshots should be kept, and which should be auto-pruned.
 
 ## Use-case
 
