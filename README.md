@@ -56,7 +56,7 @@ retention:
   - interval: 6h  # Retain a snapshot for every 6th hour
     count: 42     # Retain 42 6-hourly snapshots (7 days)
   - interval: 1d  # Retain a snapshot for every day
-    count: 30     # Retain 20 daily snapshots
+    count: 30     # Retain 30 daily snapshots
   - interval: 30d # Retain a snapshot for every 30 days
     count: 3      # Retain 3 30-day snapshots (90 days)
 ```
