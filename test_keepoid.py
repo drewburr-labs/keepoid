@@ -40,7 +40,12 @@ def test_hourly_policy(sample_snapshots):
     prune_after = parse_duration("0m")  # Prune immediately
 
     snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
-        sample_snapshots, retention_policies, prune_after, global_start_time_str, now
+        sample_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
     )
 
     # We have 48 snapshots.
@@ -63,7 +68,12 @@ def test_daily_policy(sample_snapshots):
     prune_after = parse_duration("0m")  # Prune immediately
 
     snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
-        sample_snapshots, retention_policies, prune_after, global_start_time_str, now
+        sample_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
     )
 
     # We have 48 hourly snapshots
@@ -94,7 +104,12 @@ def test_2day_policy(sample_snapshots):
     prune_after = parse_duration("0m")  # Prune immediately
 
     snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
-        sample_snapshots, retention_policies, prune_after, global_start_time_str, now
+        sample_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
     )
 
     # We have 48 hourly snapshots
@@ -122,7 +137,12 @@ def test_merged_retention_logic(sample_snapshots):
     prune_after = parse_duration("0m")  # Prune immediately if not kept
 
     snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
-        sample_snapshots, retention_policies, prune_after, global_start_time_str, now
+        sample_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
     )
 
     # We have 48 snapshots.
@@ -157,7 +177,12 @@ def test_prune_after(sample_snapshots):
     prune_after = parse_duration("36h")
 
     snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
-        sample_snapshots, retention_policies, prune_after, global_start_time_str, now
+        sample_snapshots,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data",
     )
 
     # Hour 0 and hour 1
@@ -176,3 +201,57 @@ def test_prune_after(sample_snapshots):
     # Snapshots 37-47 are eligible for pruning. (12 snapshots)
     # Snapshot 36 is not expected to be pruned because it does not exceed 36 hours ago
     assert snapshots_to_prune == sample_snapshots[37:]
+
+
+@pytest.fixture
+def multi_dataset_snapshots():
+    snapshots = []
+    # Create hourly snapshots for the last 48 hours for two datasets
+    for i in range(48):
+        snap_time = now - timedelta(hours=i)
+        snapshots.append(
+            Snapshot(f"pool/data/A@autosnap_{snap_time.isoformat()}", snap_time)
+        )
+        snapshots.append(
+            Snapshot(f"pool/data/B@autosnap_{snap_time.isoformat()}", snap_time)
+        )
+    return snapshots
+
+
+def test_multi_dataset_policy(multi_dataset_snapshots):
+    # Keep 24 hourly for dataset A, 12 hourly for dataset B, 5 for others (default)
+    retention_policies = [
+        {"interval": "1h", "count": 24, "path": "pool/data/A"},
+        {"interval": "1h", "count": 12, "path": "pool/data/B"},
+    ]
+    prune_after = parse_duration("0m")
+
+    snapshots_a = [s for s in multi_dataset_snapshots if s.name.startswith("pool/data/A")]
+    snapshots_b = [s for s in multi_dataset_snapshots if s.name.startswith("pool/data/B")]
+
+    prune_a, kept_a, pa_kept_a = determine_snapshots_to_prune(
+        snapshots_a,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data/A",
+    )
+    prune_b, kept_b, pa_kept_b = determine_snapshots_to_prune(
+        snapshots_b,
+        retention_policies,
+        prune_after,
+        global_start_time_str,
+        now,
+        "pool/data/B",
+    )
+
+    # Dataset A: 48 snapshots, 25 kept by policy (24+1)
+    assert len(kept_a) == 25
+    assert len(prune_a) == 23
+    assert len(pa_kept_a) == 0
+
+    # Dataset B: 48 snapshots, 13 kept by policy (12+1)
+    assert len(kept_b) == 13
+    assert len(prune_b) == 35
+    assert len(pa_kept_b) == 0

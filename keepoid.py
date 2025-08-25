@@ -4,6 +4,7 @@ import argparse
 import subprocess
 import yaml
 from datetime import datetime, timedelta, time
+from collections import defaultdict
 
 
 def parse_duration(duration_str):
@@ -86,19 +87,31 @@ def determine_snapshots_to_prune(
     prune_after,
     global_start_time_str,
     now,
+    dataset_path,
 ):
     """Determines which snapshots to keep and which to prune based on policies."""
     policy_kept_snapshots = set()
-    # Anchor the target time calculation
-    anchor_date = now.date()
 
+    # Filter policies for the current dataset
+    applicable_policies = []
     for policy in retention_policies:
+        policy_path = policy.get("path")
+        if policy_path is None or policy_path == dataset_path:
+            applicable_policies.append(policy)
+
+    for policy in applicable_policies:
         interval = parse_duration(policy["interval"])
+        # Add 1 to ensure backup window falls within available backups
         count = policy["count"] + 1
         start_time_str = policy.get("startTime", global_start_time_str)
         policy_start_time = time.fromisoformat(start_time_str)
 
         for i in range(count):
+            # Anchor the target time calculation to create a datetime object
+            anchor_date = now.date()
+            if now.time() < policy_start_time:
+                anchor_date -= timedelta(days=1)
+
             target_time = datetime.combine(anchor_date, policy_start_time) - (
                 i * interval
             )
@@ -165,24 +178,46 @@ def main():
         return
 
     now = datetime.now()
-    snapshots_to_prune, policy_kept_snapshots, prune_after_kept_snapshots = (
-        determine_snapshots_to_prune(
-            all_snapshots, retention_policies, prune_after, global_start_time_str, now
+
+    snapshots_by_dataset = defaultdict(list)
+    for snapshot in all_snapshots:
+        snapshots_by_dataset[snapshot.name.split("@")[0]].append(snapshot)
+
+    all_snapshots_to_prune = []
+    all_policy_kept_snapshots = set()
+    all_prune_after_kept_snapshots = []
+
+    for dataset_path, dataset_snapshots in snapshots_by_dataset.items():
+        (
+            snapshots_to_prune,
+            policy_kept_snapshots,
+            prune_after_kept_snapshots,
+        ) = determine_snapshots_to_prune(
+            dataset_snapshots,
+            retention_policies,
+            prune_after,
+            global_start_time_str,
+            now,
+            dataset_path,
         )
+        all_snapshots_to_prune.extend(snapshots_to_prune)
+        all_policy_kept_snapshots.update(policy_kept_snapshots)
+        all_prune_after_kept_snapshots.extend(prune_after_kept_snapshots)
+
+    total_kept = len(all_policy_kept_snapshots) + len(
+        all_prune_after_kept_snapshots
     )
 
-    total_kept = len(policy_kept_snapshots) + len(prune_after_kept_snapshots)
-
-    print(f"Found {len(all_snapshots)} snapshots.")
+    print(f"Found {len(all_snapshots)} snapshots across {len(snapshots_by_dataset)} datasets.")
     print(
-        f"Keeping {total_kept} snapshots ({len(policy_kept_snapshots)} by policy, {len(prune_after_kept_snapshots)} by pruneAfter)."
+        f"Keeping {total_kept} snapshots ({len(all_policy_kept_snapshots)} by policy, {len(all_prune_after_kept_snapshots)} by pruneAfter)."
     )
-    print(f"Identified {len(snapshots_to_prune)} snapshots to prune.")
+    print(f"Identified {len(all_snapshots_to_prune)} snapshots to prune.")
 
-    for snapshot in snapshots_to_prune:
+    for snapshot in all_snapshots_to_prune:
         destroy_snapshot(snapshot.name, dry_run=args.dry_run)
 
-    if not snapshots_to_prune:
+    if not all_snapshots_to_prune:
         print("No snapshots to prune.")
 
 
