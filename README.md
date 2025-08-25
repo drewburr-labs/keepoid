@@ -82,7 +82,7 @@ It would be conterintuitive to prune snapshot 1 when snapshot 2 is created, beca
 
 ## Installation
 
-`keepoid` requires Python 3.6+
+`keepoid` requires Python 3.8+
 
 1. Install dependencies:
 
