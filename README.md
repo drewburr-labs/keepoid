@@ -6,11 +6,15 @@ Keepoid itself does not take snapshots. Instead, it focuses on retention and pru
 
 ## Use-case
 
-We'll use the example of using syncoid to replicte snapshots from a source zfs dataset to a remote archive server. It is desired for the source dataset to have as few snapshots as possible, so `sanoid` is not used. `syncoid` replicates the source dataset to the archive server, which creates a chain of incremental snapshots. It is intended for the archive server to store all daily/weekly/monthly snapshots, but these cannot be created on the backup site as syncoid will destroy separately-created snapshots when replication ocurrs.
+A typical use-case for `keepoid` is managing snapshot retention on a backup/archive server that receives replicated ZFS snapshots from a source server.
 
-Intead, the source server takes frequent and aggressively-pruned snapshots using `sanoid`, which are then replicated using `syncoid`. On the backup host, `keepoid` will handle tracking of which snapshots are requred to meet the desired retention periods, and prune all other snapshots.
+- On the **source server**, `sanoid` is configured to take frequent snapshots (e.g., hourly) and prune them aggressively, keeping only a minimal set of recent snapshots to save space.
+- `syncoid` is used to replicate these snapshots to the destination (backup) server before they are pruned on the source.
+- On the **destination server**, `keepoid` is used to enforce a more comprehensive retention policy (e.g., keeping daily, weekly, and monthly snapshots for longer periods).
 
-This is made possible by having `sanoid` take snapshots at the minimum retention interval for `keepoid` (for example, retaining 36 hourly snapshot requires that `sanoid` on the source takes snapshots every hour). `sanoid` on the source should have a retention period that ensures that `syncoid` will replicate the snapshot to the destination for `syncoid` to manage.
+This approach allows the source server to minimize local snapshot storage, while the destination server maintains a robust and flexible snapshot history. `keepoid` ensures that only the snapshots required to meet the configured retention policy are kept on the destination, and all others are pruned, without interfering with the replication process.
+
+This model is especially useful when the backup/archive server is intended to provide long-term retention, but the source server cannot afford to keep many snapshots due to storage constraints.
 
 ## Configuring keepoid retention
 
