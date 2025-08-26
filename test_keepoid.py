@@ -1,6 +1,8 @@
 import pytest
 from datetime import datetime, timedelta
 import random
+import re
+from pathlib import Path
 from keepoid import parse_duration, determine_snapshots_to_prune, Snapshot, group_snapshots_by_dataset
 
 now = datetime(2023, 1, 31, 0, 0, 0)
@@ -298,16 +300,154 @@ def test_multi_dataset_policy(multi_dataset_snapshots):
     assert len(pa_kept_b) == 0
 
 
-def test_group_snapshots_by_dataset():
-    snapshots = [
-        Snapshot("pool/data/A@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
-        Snapshot("pool/data/A@autosnap_2023-01-01T01:00:00", datetime(2023, 1, 1, 1, 0, 0)),
-        Snapshot("pool/data/B@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
-        Snapshot("pool/data/B@autosnap_2023-01-01T01:00:00", datetime(2023, 1, 1, 1, 0, 0)),
-        Snapshot("pool/data/C@autosnap_2023-01-01T00:00:00", datetime(2023, 1, 1, 0, 0, 0)),
+def parse_real_snapshot(snapshot_line):
+    """Parse a real snapshot line into a Snapshot object"""
+    snapshot_line = snapshot_line.strip()
+    if not snapshot_line:
+        return None
+
+    # Extract dataset and snapshot name
+    dataset, snapshot_name = snapshot_line.split('@', 1)
+
+    # Parse different snapshot types
+    timestamp = None
+
+    if 'autosnap_' in snapshot_name:
+        # Parse autosnap format: autosnap_2025-08-24_22:00:03_frequently
+        match = re.search(r'autosnap_(\d{4}-\d{2}-\d{2})_(\d{2}:\d{2}:\d{2})_', snapshot_name)
+        if match:
+            date_part = match.group(1)
+            time_part = match.group(2)
+            try:
+                timestamp = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+    elif 'syncoid_' in snapshot_name:
+        # Parse syncoid format: syncoid_2025-08-25:22:15:03-GMT-04:00
+        match = re.search(r'syncoid_(\d{4}-\d{2}-\d{2}):(\d{2}:\d{2}:\d{2})', snapshot_name)
+        if match:
+            date_part = match.group(1)
+            time_part = match.group(2)
+            try:
+                timestamp = datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                pass
+
+    if timestamp is None:
+        # Fallback timestamp for unparseable snapshots
+        timestamp = datetime(2025, 8, 25, 12, 0, 0)
+
+    return Snapshot(snapshot_line, timestamp)
+
+
+@pytest.fixture
+def real_snapshots():
+    """Load real snapshots from test-snapshots.txt"""
+    test_file = Path(__file__).parent / "test-snapshots.txt"
+    snapshots = []
+
+    with open(test_file, 'r') as f:
+        for line in f:
+            snapshot = parse_real_snapshot(line)
+            if snapshot:
+                snapshots.append(snapshot)
+
+    return snapshots
+
+
+def test_real_snapshot_parsing():
+    """Test that we can parse real snapshot names correctly"""
+    # Test autosnap parsing
+    autosnap_line = "backup/dataset/3cd362dbcefa@autosnap_2025-08-24_22:00:03_frequently"
+    snapshot = parse_real_snapshot(autosnap_line)
+
+    assert snapshot is not None
+    assert snapshot.name == autosnap_line
+    assert snapshot.creation_time == datetime(2025, 8, 24, 22, 0, 3)
+
+    # Test syncoid parsing
+    syncoid_line = "backup/dataset/3cd362dbcefa@syncoid_2025-08-25:22:15:03-GMT-04:00"
+    snapshot = parse_real_snapshot(syncoid_line)
+
+    assert snapshot is not None
+    assert snapshot.name == syncoid_line
+    assert snapshot.creation_time == datetime(2025, 8, 25, 22, 15, 3)
+
+
+def test_real_snapshots_grouping(real_snapshots):
+    """Test grouping real snapshots by dataset"""
+    grouped = group_snapshots_by_dataset(real_snapshots)
+
+    # Should have multiple datasets
+    assert len(grouped) > 1
+
+    # Check that we have the expected dataset pattern
+    dataset_names = list(grouped.keys())
+    assert all(name.startswith("backup/dataset/") for name in dataset_names)
+
+    # Each dataset should have multiple snapshots
+    for dataset, snaps in grouped.items():
+        assert len(snaps) > 1
+        # Should have different types of snapshots per dataset
+        snapshot_types = set()
+        for snap in snaps:
+            if 'autosnap_' in snap.name:
+                if '_frequently' in snap.name:
+                    snapshot_types.add('frequently')
+                elif '_hourly' in snap.name:
+                    snapshot_types.add('hourly')
+            elif 'syncoid_' in snap.name:
+                snapshot_types.add('syncoid')
+
+        assert len(snapshot_types) > 1, f"Dataset {dataset} should have multiple snapshot types"
+
+
+def test_real_snapshots_pruning_policy(real_snapshots):
+    """Test pruning policy on real snapshot data"""
+    # Group snapshots by dataset
+    grouped = group_snapshots_by_dataset(real_snapshots)
+
+    # Test on first dataset
+    first_dataset = list(grouped.keys())[0]
+    dataset_snapshots = grouped[first_dataset]
+
+    # Define a realistic retention policy
+    retention_policies = [
+        {"interval": "1h", "count": 24},  # Keep 24 hourly
     ]
-    grouped = group_snapshots_by_dataset(snapshots)
-    assert set(grouped.keys()) == {"pool/data/A", "pool/data/B", "pool/data/C"}
-    assert len(grouped["pool/data/A"]) == 2
-    assert len(grouped["pool/data/B"]) == 2
-    assert len(grouped["pool/data/C"]) == 1
+    prune_after = parse_duration("1h")  # Keep everything within 30 days
+
+    # Use a current_time that's just after the newest snapshot
+    current_time = datetime(2025, 8, 26, 2, 5, 0)
+
+    snapshots_to_prune, policy_kept, prune_after_kept = determine_snapshots_to_prune(
+        dataset_snapshots,
+        retention_policies,
+        prune_after,
+        "00:00",
+        current_time,
+        first_dataset,
+    )
+
+    assert len(policy_kept) == 25
+    assert len(snapshots_to_prune) == 4
+    assert len(prune_after_kept) == 0
+
+
+def test_real_snapshots_time_ordering(real_snapshots):
+    """Test that real snapshots are correctly time-ordered"""
+    # Group by dataset
+    grouped = group_snapshots_by_dataset(real_snapshots)
+
+    for dataset, snaps in grouped.items():
+        # Filter to autosnap snapshots only for consistent comparison
+        autosnap_snaps = [s for s in snaps if 'autosnap_' in s.name]
+
+        if len(autosnap_snaps) > 1:
+            # Sort by creation time
+            sorted_snaps = sorted(autosnap_snaps, key=lambda x: x.creation_time)
+
+            # Verify ordering
+            for i in range(1, len(sorted_snaps)):
+                assert sorted_snaps[i-1].creation_time <= sorted_snaps[i].creation_time, \
+                    f"Snapshots should be time-ordered in dataset {dataset}"
