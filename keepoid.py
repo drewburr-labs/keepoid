@@ -5,6 +5,7 @@ import subprocess
 import yaml
 from datetime import datetime, timedelta, time
 
+
 def parse_duration(duration_str):
     """Parses a duration string like '1h', '30d' into a timedelta."""
     unit = duration_str[-1]
@@ -97,6 +98,9 @@ def determine_snapshots_to_prune(
         if policy_path is None or policy_path == dataset_path:
             applicable_policies.append(policy)
 
+    # Pre-sort snapshots by creation time once
+    sorted_snaps = sorted(all_snapshots, key=lambda s: s.creation_time)
+
     for policy in applicable_policies:
         interval = parse_duration(policy["interval"])
         # Add 1 to ensure backup window falls within available backups
@@ -104,27 +108,46 @@ def determine_snapshots_to_prune(
         start_time_str = policy.get("startTime", global_start_time_str)
         policy_start_time = time.fromisoformat(start_time_str)
 
+        # Base anchor for schedule (the first possible boundary on or before now)
+        anchor = datetime.combine(now.date(), policy_start_time)
+        if anchor > now:
+            anchor -= timedelta(days=1)
+
+        # Last slot boundary at or before 'now'
+        slots_since_anchor = int((now - anchor) // interval)
+        last_slot = anchor + slots_since_anchor * interval
+
         for i in range(count):
-            # Anchor the target time calculation to create a datetime object
-            anchor_date = now.date()
-            if now.time() < policy_start_time:
-                anchor_date -= timedelta(days=1)
+            target_time = last_slot - i * interval
+            if target_time < datetime.min:
+                continue
 
-            target_time = datetime.combine(anchor_date, policy_start_time) - (
-                i * interval
-            )
-            best_snapshot = None
-            min_diff = timedelta.max
+            # Window for this slot
+            window_start = target_time
+            window_end = target_time + interval
 
-            for snapshot in all_snapshots:
-                if snapshot.creation_time >= target_time:
-                    diff = snapshot.creation_time - target_time
-                    if diff < min_diff:
-                        min_diff = diff
-                        best_snapshot = snapshot
+            # 1. Prefer snapshot in [slot, slot+interval)
+            in_window = [
+                s for s in sorted_snaps if window_start <= s.creation_time < window_end
+            ]
 
-            if best_snapshot:
-                policy_kept_snapshots.add(best_snapshot)
+            candidate = None
+            if in_window:
+                # Earliest in window (closest to slot start)
+                candidate = min(in_window, key=lambda s: s.creation_time)
+            else:
+                # 2. Next snapshot after window_start
+                after = [s for s in sorted_snaps if s.creation_time >= window_start]
+                if after:
+                    candidate = min(after, key=lambda s: s.creation_time)
+                else:
+                    # 3. Fallback: latest snapshot before window_start
+                    before = [s for s in sorted_snaps if s.creation_time < window_start]
+                    if before:
+                        candidate = max(before, key=lambda s: s.creation_time)
+
+            if candidate:
+                policy_kept_snapshots.add(candidate)
 
     snapshots_to_prune = []
     prune_after_kept_snapshots = []
@@ -211,11 +234,11 @@ def main():
         all_policy_kept_snapshots.update(policy_kept_snapshots)
         all_prune_after_kept_snapshots.extend(prune_after_kept_snapshots)
 
-    total_kept = len(all_policy_kept_snapshots) + len(
-        all_prune_after_kept_snapshots
-    )
+    total_kept = len(all_policy_kept_snapshots) + len(all_prune_after_kept_snapshots)
 
-    print(f"Found {len(all_snapshots)} snapshots across {len(snapshots_by_dataset)} datasets.")
+    print(
+        f"Found {len(all_snapshots)} snapshots across {len(snapshots_by_dataset)} datasets."
+    )
     print(
         f"Keeping {total_kept} snapshots ({len(all_policy_kept_snapshots)} by policy, {len(all_prune_after_kept_snapshots)} by pruneAfter)."
     )
